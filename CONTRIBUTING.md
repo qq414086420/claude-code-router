@@ -1,4 +1,4 @@
-# 开发规范
+﻿# 开发规范
 
 ## 1. 分支管理
 
@@ -27,45 +27,44 @@ git push origin feature/network-aware-router
 # 创建 PR
 ```
 
-## 2. 开发路径与部署路径分离
+## 2. 开发与生产环境分离
 
 ### 目录约定
 
 ```
-~/.claude-code-router/           # 生产环境（ccr start 使用）
-├── config.json                  # 生产配置
-├── logs/                        # 生产日志
-└── presets/                     # 生产预设
+D:\code\claude-code-router/       # 开发环境（代码仓）
+├── dist/                         # 本地构建产物
+├── packages/                     # 源代码
+└── tests/                        # 测试配置
 
-~/.claude-code-router-dev/       # 开发环境
-├── config.json                  # 开发配置
-├── logs/                        # 开发日志
-└── presets/                     # 开发预设
+~/.claude-code-router/            # 生产环境（部署目录）
+├── config.json                   # 生产配置
+├── logs/                         # 生产日志
+└── presets/                      # 生产预设
 ```
 
 ### 端口分离
 
 | 环境 | 默认端口 | 配置方式 |
 |------|---------|---------|
-| 生产 | 3456 | `config.json` 中 `PORT` |
+| 生产 | 3456 | `~/.claude-code-router/config.json` 中 `PORT` |
 | 开发 | 13456 | 环境变量 `SERVICE_PORT=13456` |
-| 测试 | 23456 | 环境变量 `SERVICE_PORT=23456` |
+| 冒烟测试 | 23456 | 测试文件内定义 `TEST_PORT = 23456` |
+| 集成测试 | 23457 | 测试文件内定义 `TEST_PORT = 23457`（避免冲突） |
 
 ### 开发启动
 
 ```bash
-# 方式 1：使用开发目录 + 开发端口
+# 方式 1：开发模式（开发端口）
 SERVICE_PORT=13456 pnpm dev:server
 
-# 方式 2：开发 CLI
-pnpm dev:cli start
-
-# 方式 3：开发 UI
-pnpm dev:ui
+# 方式 2：本地构建后部署到生产目录
+pnpm build
+node dist/cli.js start
 ```
 
-> 注意：开发环境需创建 `~/.claude-code-router-dev/config.json` 并在其中设置 `PORT: 13456`，
-> 或通过环境变量 `SERVICE_PORT=13456` 指定。
+> 注意：本地构建后 `node dist/cli.js start` 会使用 `~/.claude-code-router/config.json`（生产配置）。
+> 开发测试时可用 `SERVICE_PORT=13456` 启动临时服务，不影响生产环境。
 
 ## 3. TDD 开发流程
 
@@ -107,24 +106,23 @@ pnpm dev:ui
 
 ### 4.2 测试框架
 
-- **vitest** — 单元测试 + 集成测试
+- **vitest** — 单元测试 + 集成测试 + 冒烟测试
 - 测试文件放各 package 的 `tests/` 目录下
 
 ```
 packages/core/
 ├── src/
 └── tests/
-    ├── unit/                    # 单元测试
-    │   └── networkDetector.test.ts
-    └── integration/             # 集成测试
-        └── router.integration.test.ts
+    └── unit/                    # 单元测试
+        └── networkDetector.test.ts
 
 packages/server/
 ├── src/
 └── tests/
-    ├── integration/
+    ├── integration/             # 集成测试
+    │   └── networkRouter.integration.test.ts
     └── smoke/                   # 冒烟测试
-        └── api.smoke.test.ts
+        └── networkRouter.smoke.test.ts
 ```
 
 ### 4.3 测试命名规范
@@ -140,19 +138,29 @@ describe('NetworkDetector', () => {
 
 ### 4.4 测试脚本
 
-根 `package.json` 新增：
-
 ```json
 {
   "scripts": {
     "test": "vitest run",
-    "test:watch": "vitest",
-    "test:unit": "vitest run --project unit",
-    "test:integration": "vitest run --project integration",
-    "test:smoke": "vitest run --project smoke",
-    "test:coverage": "vitest run --coverage"
+    "test:watch": "vitest"
   }
 }
+```
+
+运行指定层级的测试：
+
+```bash
+# 全部测试
+pnpm test
+
+# 单元测试
+npx vitest run packages/core/tests
+
+# 集成测试
+npx vitest run packages/server/tests/integration
+
+# 冒烟测试
+npx vitest run packages/server/tests/smoke
 ```
 
 ### 4.5 测试环境配置
@@ -163,8 +171,7 @@ describe('NetworkDetector', () => {
 tests/
 ├── vitest.config.ts             # 根级 vitest 配置
 ├── fixtures/
-│   ├── config.test.json         # 测试用配置（端口 23456）
-│   └── config.intranet.json     # 模拟内网场景配置
+│   └── config.test.json         # 测试用配置（端口 23456）
 └── helpers/
     └── server.ts                # 测试服务器启动/停止工具
 ```
@@ -174,8 +181,8 @@ tests/
 | 层级 | 范围 | 示例 |
 |------|------|------|
 | **单元测试** | 单个类/函数，mock 所有外部依赖 | NetworkDetector.detect() 的 DNS 解析逻辑 |
-| **集成测试** | 多模块协作，启动真实服务（测试端口） | 完整请求流程：请求 → Router → Transformer → mock Provider |
-| **冒烟测试** | 端到端，使用真实 Provider（如可用） | 启动服务 → 发送请求 → 收到响应 → 状态正确 |
+| **集成测试** | 多模块协作，启动真实服务（测试端口） | Server + NetworkDetector 生命周期 |
+| **冒烟测试** | 端到端 HTTP API，验证路由注册正确 | GET /api/network-state 返回正确响应 |
 
 ## 5. 代码规范
 
@@ -213,6 +220,7 @@ pnpm build
 # 单个 package 构建
 pnpm build:core
 pnpm build:server
+pnpm build:ui
 
 # 发布
 pnpm release
@@ -263,61 +271,17 @@ Invoke-WebRequest -Uri "http://127.0.0.1:3456/api/network-state" -UseBasicParsin
 Start-Process "http://127.0.0.1:3456/ui/"
 ```
 
-### 7.3 快速部署脚本
-
-项目根目录新增 `scripts/deploy-local.ps1`：
-
-```powershell
-# 快速本地部署脚本
-param([string]$Package = "all")
-
-$ErrorActionPreference = "Stop"
-
-Write-Host "=== Building ===" -ForegroundColor Cyan
-if ($Package -eq "all" -or $Package -eq "core") { pnpm build:core }
-if ($Package -eq "all" -or $Package -eq "server") { pnpm build:server }
-if ($Package -eq "all" -or $Package -eq "ui") { 
-    cd packages/ui; npx vite build; cd .. 
-}
-
-Write-Host "=== Building CLI ===" -ForegroundColor Cyan
-npx esbuild packages/cli/src/cli.ts --bundle --platform=node --minify --outfile=packages/cli/dist/cli.js
-
-Write-Host "=== Copying assets ===" -ForegroundColor Cyan
-Copy-Item "packages/server/dist/tiktoken_bg.wasm" "packages/cli/dist/" -Force
-Copy-Item "packages/ui/dist/index.html" "packages/cli/dist/" -Force
-if (Test-Path "dist") { Remove-Item "dist" -Recurse -Force }
-Copy-Item "packages/cli/dist" "dist" -Recurse -Force
-
-Write-Host "=== Restarting service ===" -ForegroundColor Cyan
-node dist/cli.js stop
-Start-Sleep 2
-Start-Process -FilePath "node" -ArgumentList "dist/cli.js","start" -WindowStyle Hidden
-Start-Sleep 8
-node dist/cli.js status
-
-Write-Host "=== Done ===" -ForegroundColor Green
-```
-
-使用方式：
-```powershell
-# 全量部署
-.\scripts\deploy-local.ps1
-
-# 只部署 core
-.\scripts\deploy-local.ps1 -Package core
-```
-
-### 7.4 问题定位原则
+### 7.3 问题定位原则
 
 1. **加日志定位**：遇到问题先加详细日志，部署后再观测
 2. **不要删日志**：调试日志保留在代码中，方便后续排查
 3. **分层测试覆盖**：如果问题漏到部署阶段才发现，说明测试覆盖不足，需补充测试
 
-### 7.5 已知的部署发现问题
+### 7.4 已知的部署发现问题
 
 | 问题 | 发现方式 | 根因 | 解决 |
 |------|----------|------|------|
 | DNS 切换后不检测 | 部署观测 | `dns.resolve4` 使用 c-ares resolver，进程启动时绑定 DNS 服务器，网络切换后不感知 | 改用 `dns.lookup`（调用系统 `getaddrinfo`） |
+| 正则表达式转义错误 | 部署观测 | JSON 中 `intranetPattern` 写成 `"^10\\\\."` 导致正则变成 `/^10\\./` | JSON 中应写 `"^10\\."`（两个反斜杠） |
 
 **教训**：单元测试 mock 了 DNS，绕过了真实 resolver 的行为。对于依赖系统行为的模块，集成测试应尽量用真实依赖而非 mock。
