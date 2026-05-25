@@ -42,6 +42,11 @@ export class NetworkDetector {
       `every ${this.networkConfig.checkInterval || 30}s`
     );
 
+    // Re-apply current state in case config changed (e.g. hot reload)
+    if (this.currentState !== 'unknown') {
+      this.applyState(this.currentState);
+    }
+
     await this.check();
 
     const interval = (this.networkConfig.checkInterval || 30) * 1000;
