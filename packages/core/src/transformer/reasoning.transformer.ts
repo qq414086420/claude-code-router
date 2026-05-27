@@ -35,9 +35,10 @@ export class ReasoningTransformer implements Transformer {
     if (response.headers.get("Content-Type")?.includes("application/json")) {
       const jsonResponse = await response.json();
       if (jsonResponse.choices[0]?.message.reasoning_content) {
-        jsonResponse.thinking = {
+        (jsonResponse.choices[0].message as any).thinking = {
           content: jsonResponse.choices[0]?.message.reasoning_content
         }
+        delete jsonResponse.choices[0].message.reasoning_content;
       }
       // Handle non-streaming response if needed
       return new Response(JSON.stringify(jsonResponse), {
